@@ -182,9 +182,40 @@
         const autocompleteToggle = document.getElementById('autocomplete-toggle');
         const downloadBtn = document.getElementById('download-btn');
 
-        let isDarkMode = true;
+        // --- Cache Keys ---
+        const CACHE_KEY_CONTENT  = 'dsapad_content';
+        const CACHE_KEY_LANGUAGE = 'dsapad_language';
+        const CACHE_KEY_THEME    = 'dsapad_theme';
+        const CACHE_KEY_AUTOCOMPLETE = 'dsapad_autocomplete';
+
+        // --- Load Cached Settings ---
+        const cachedLang   = localStorage.getItem(CACHE_KEY_LANGUAGE) || 'python';
+        const cachedTheme  = localStorage.getItem(CACHE_KEY_THEME)   || 'dark';
+        const cachedAC     = localStorage.getItem(CACHE_KEY_AUTOCOMPLETE);
+        const cachedContent = localStorage.getItem(CACHE_KEY_CONTENT);
+
+        let isDarkMode = cachedTheme === 'dark';
         let isSettingsOpen = false;
         let editorInstance;
+        let _saveTimer = null;
+
+        // Apply cached language to the dropdown immediately
+        langToggle.value = cachedLang;
+
+        // Apply cached autocomplete toggle state
+        if (cachedAC !== null) {
+            autocompleteToggle.checked = cachedAC === 'true';
+        }
+
+        // Debounced save helper
+        function saveContentDebounced() {
+            clearTimeout(_saveTimer);
+            _saveTimer = setTimeout(() => {
+                if (editorInstance) {
+                    localStorage.setItem(CACHE_KEY_CONTENT, editorInstance.getValue());
+                }
+            }, 300);
+        }
 
         // --- Settings Menu Logic ---
         function toggleSettings() {
@@ -208,11 +239,18 @@
 
         require(['vs/editor/editor.main'], function () {
 
-            editorInstance = monaco.editor.create(document.getElementById('editor-container'), {
-                value: "# cook your dish here\n",
+            // Determine initial editor content from cache
+            const defaultComment = cachedLang === 'cpp' ? '// cook your dish here\n' : '# cook your dish here\n';
+            const initialContent = cachedContent !== null ? cachedContent : defaultComment;
 
-                language: 'python', // Default Language
-                theme: 'vs-dark',   // Default Theme
+            // Determine initial autocomplete state
+            const acEnabled = autocompleteToggle.checked;
+
+            editorInstance = monaco.editor.create(document.getElementById('editor-container'), {
+                value: initialContent,
+
+                language: cachedLang,
+                theme: isDarkMode ? 'vs-dark' : 'vs',
                 automaticLayout: true,
 
                 // Typography
@@ -245,15 +283,102 @@
                     horizontalHasArrows: false
                 },
 
-                // Default Autocomplete Settings
+                // Autocomplete Settings (restored from cache)
                 suggest: { showSnippets: false, showClasses: false, showModules: false },
-                wordBasedSuggestions: 'currentDocument',
-                quickSuggestions: { other: true, comments: false, strings: false }
+                wordBasedSuggestions: acEnabled ? 'currentDocument' : 'off',
+                quickSuggestions: acEnabled
+                    ? { other: true, comments: false, strings: false }
+                    : { other: false, comments: false, strings: false }
             });
+
+            // Auto-save editor content on every keystroke (debounced)
+            editorInstance.onDidChangeModelContent(() => {
+                saveContentDebounced();
+            });
+
+            // --- Reusable theme application function ---
+            // Applies all UI styling for the current isDarkMode state
+            // without touching the settings panel open/close visibility.
+            function applyTheme() {
+                const appHeader = document.getElementById('app-header');
+                const appTitle = document.getElementById('app-title');
+                const logo = document.getElementById('header-logo');
+                const panelTexts = document.querySelectorAll('.panel-text');
+                const panelBorders = document.querySelectorAll('.panel-border');
+
+                // Determine current panel visibility class to preserve it
+                const panelVisClass = isSettingsOpen ? 'visible-panel' : 'hidden-panel';
+
+                if (isDarkMode) {
+                    localStorage.setItem(CACHE_KEY_THEME, 'dark');
+                    monaco.editor.setTheme('vs-dark');
+                    document.body.style.backgroundColor = '#1e1e1e';
+
+                    // Header Dark
+                    appHeader.className = "h-8 bg-[#1a1a1a] border-b border-[#333] flex items-center justify-between px-6 select-none transition-colors duration-200";
+                    appTitle.className = "text-gray-200 font-medium tracking-widest text-xs uppercase";
+                    settingsBtn.className = "w-6 h-6 text-xs flex items-center justify-center bg-[#2d2d2d] text-gray-300 rounded-md shadow-sm hover:bg-[#3d3d3d] border border-[#444] transition-colors focus:outline-none";
+
+                    // Logo Dark
+                    logo.querySelector('circle').setAttribute('stroke', '#3b82f6');
+                    logo.querySelector('text').setAttribute('fill', '#3b82f6');
+
+                    // Panel Dark (preserve open/close state)
+                    settingsPanel.className = `settings-menu ${panelVisClass} absolute top-8 right-0 z-[60] w-64 bg-[#252526] rounded-xl shadow-2xl border border-[#444] py-2 mt-2`;
+                    // Re-query panelHeader after className was replaced
+                    const panelHeader = settingsPanel.querySelector('div');
+                    panelHeader.className = "px-4 py-3 border-b border-[#444] text-gray-200 font-semibold text-sm";
+
+                    langToggle.className = "h-8 px-2 bg-[#333] text-gray-300 rounded-md border border-[#555] outline-none cursor-pointer text-sm hover:bg-[#444] transition-colors";
+
+                    themeToggleBtn.innerHTML = '<i class="fas fa-sun text-sm"></i>';
+                    themeToggleBtn.className = "w-8 h-8 flex items-center justify-center bg-[#333] text-yellow-400 rounded-md hover:bg-[#444] border border-[#555] transition-colors focus:outline-none";
+
+                    panelTexts.forEach(el => el.className = "text-gray-300 text-sm panel-text");
+                    panelBorders.forEach(el => {
+                        el.classList.remove('border-gray-200');
+                        el.classList.add('border-[#444]');
+                    });
+
+                } else {
+                    localStorage.setItem(CACHE_KEY_THEME, 'light');
+                    monaco.editor.setTheme('vs');
+                    document.body.style.backgroundColor = '#ffffff';
+
+                    // Header Light
+                    appHeader.className = "h-8 bg-[#f9fafb] border-b border-gray-200 flex items-center justify-between px-6 select-none transition-colors duration-200";
+                    appTitle.className = "text-gray-700 font-medium tracking-widest text-xs uppercase";
+                    settingsBtn.className = "w-6 h-6 text-xs flex items-center justify-center bg-white text-gray-700 rounded-md shadow-sm hover:bg-gray-100 border border-gray-300 transition-colors focus:outline-none";
+
+                    // Logo Light
+                    logo.querySelector('circle').setAttribute('stroke', '#374151');
+                    logo.querySelector('text').setAttribute('fill', '#374151');
+
+                    // Panel Light (preserve open/close state)
+                    settingsPanel.className = `settings-menu ${panelVisClass} absolute top-8 right-0 z-[60] w-64 bg-white rounded-xl shadow-2xl border border-gray-200 py-2 mt-2`;
+                    const panelHeader = settingsPanel.querySelector('div');
+                    panelHeader.className = "px-4 py-3 border-b border-gray-200 text-gray-800 font-semibold text-sm";
+
+                    langToggle.className = "h-8 px-2 bg-white text-gray-700 rounded-md border border-gray-300 outline-none cursor-pointer text-sm hover:bg-gray-100 transition-colors";
+
+                    themeToggleBtn.innerHTML = '<i class="fas fa-moon text-sm"></i>';
+                    themeToggleBtn.className = "w-8 h-8 flex items-center justify-center bg-gray-100 text-gray-700 rounded-md hover:bg-gray-200 border border-gray-300 transition-colors focus:outline-none";
+
+                    panelTexts.forEach(el => el.className = "text-gray-700 text-sm panel-text");
+                    panelBorders.forEach(el => {
+                        el.classList.remove('border-[#444]');
+                        el.classList.add('border-gray-200');
+                    });
+                }
+            }
+
+            // Apply cached theme on initial load
+            applyTheme();
 
             // Handle Language Change
             langToggle.addEventListener('change', (e) => {
                 monaco.editor.setModelLanguage(editorInstance.getModel(), e.target.value);
+                localStorage.setItem(CACHE_KEY_LANGUAGE, e.target.value);
 
                 const currentVal = editorInstance.getValue().trim();
                 // Update the comment if the editor is empty or still has the default text
@@ -269,75 +394,12 @@
             // Handle Theme Toggle
             themeToggleBtn.addEventListener('click', () => {
                 isDarkMode = !isDarkMode;
-
-                const appHeader = document.getElementById('app-header');
-                const appTitle = document.getElementById('app-title');
-                const panelHeader = settingsPanel.querySelector('.border-b');
-                const panelTexts = document.querySelectorAll('.panel-text');
-                const panelBorders = document.querySelectorAll('.panel-border');
-
-                if (isDarkMode) {
-                    monaco.editor.setTheme('vs-dark');
-                    document.body.style.backgroundColor = '#1e1e1e';
-
-                    // Header Dark
-                    appHeader.className = "h-8 bg-[#1a1a1a] border-b border-[#333] flex items-center justify-between px-6 select-none transition-colors duration-200";
-                    appTitle.className = "text-gray-200 font-medium tracking-widest text-xs uppercase";
-                    settingsBtn.className = "w-6 h-6 text-xs flex items-center justify-center bg-[#2d2d2d] text-gray-300 rounded-md shadow-sm hover:bg-[#3d3d3d] border border-[#444] transition-colors focus:outline-none";
-
-                    // Logo Dark
-                    const logo = document.getElementById('header-logo');
-                    logo.querySelector('circle').setAttribute('stroke', '#3b82f6');
-                    logo.querySelector('text').setAttribute('fill', '#3b82f6');
-
-                    // Panel Dark
-                    settingsPanel.className = "settings-menu visible-panel absolute top-8 right-0 z-[60] w-64 bg-[#252526] rounded-xl shadow-2xl border border-[#444] py-2 mt-2";
-                    panelHeader.className = "px-4 py-3 border-b border-[#444] text-gray-200 font-semibold text-sm";
-
-                    langToggle.className = "h-8 px-2 bg-[#333] text-gray-300 rounded-md border border-[#555] outline-none cursor-pointer text-sm hover:bg-[#444] transition-colors";
-
-                    themeToggleBtn.innerHTML = '<i class="fas fa-sun text-sm"></i>';
-                    themeToggleBtn.className = "w-8 h-8 flex items-center justify-center bg-[#333] text-yellow-400 rounded-md hover:bg-[#444] border border-[#555] transition-colors focus:outline-none";
-
-                    panelTexts.forEach(el => el.className = "text-gray-300 text-sm panel-text");
-                    panelBorders.forEach(el => {
-                        el.classList.remove('border-gray-200');
-                        el.classList.add('border-[#444]');
-                    });
-
-                } else {
-                    monaco.editor.setTheme('vs');
-                    document.body.style.backgroundColor = '#ffffff';
-
-                    // Header Light
-                    appHeader.className = "h-8 bg-[#f9fafb] border-b border-gray-200 flex items-center justify-between px-6 select-none transition-colors duration-200";
-                    appTitle.className = "text-gray-700 font-medium tracking-widest text-xs uppercase";
-                    settingsBtn.className = "w-6 h-6 text-xs flex items-center justify-center bg-white text-gray-700 rounded-md shadow-sm hover:bg-gray-100 border border-gray-300 transition-colors focus:outline-none";
-
-                    // Logo Light
-                    const logoL = document.getElementById('header-logo');
-                    logoL.querySelector('circle').setAttribute('stroke', '#374151');
-                    logoL.querySelector('text').setAttribute('fill', '#374151');
-
-                    // Panel Light
-                    settingsPanel.className = "settings-menu visible-panel absolute top-8 right-0 z-[60] w-64 bg-white rounded-xl shadow-2xl border border-gray-200 py-2 mt-2";
-                    panelHeader.className = "px-4 py-3 border-b border-gray-200 text-gray-800 font-semibold text-sm";
-
-                    langToggle.className = "h-8 px-2 bg-white text-gray-700 rounded-md border border-gray-300 outline-none cursor-pointer text-sm hover:bg-gray-100 transition-colors";
-
-                    themeToggleBtn.innerHTML = '<i class="fas fa-moon text-sm"></i>';
-                    themeToggleBtn.className = "w-8 h-8 flex items-center justify-center bg-gray-100 text-gray-700 rounded-md hover:bg-gray-200 border border-gray-300 transition-colors focus:outline-none";
-
-                    panelTexts.forEach(el => el.className = "text-gray-700 text-sm panel-text");
-                    panelBorders.forEach(el => {
-                        el.classList.remove('border-[#444]');
-                        el.classList.add('border-gray-200');
-                    });
-                }
+                applyTheme();
             });
 
             // Handle Autocomplete Toggle
             autocompleteToggle.addEventListener('change', (e) => {
+                localStorage.setItem(CACHE_KEY_AUTOCOMPLETE, e.target.checked);
                 if (e.target.checked) {
                     editorInstance.updateOptions({
                         wordBasedSuggestions: 'currentDocument',
